@@ -10,6 +10,7 @@ from notescan.diagnostics.decoders import (  # noqa: E402
     decode_dtc_response,
     decode_pid_response,
     decode_readiness_response,
+    decode_vin_response,
 )
 
 
@@ -26,6 +27,20 @@ class DecoderTests(unittest.TestCase):
         self.assertAlmostEqual(trim.value, 12.5)
         self.assertEqual(coolant.value, 86)
 
+    def test_extended_allowlisted_pids(self):
+        runtime = decode_pid_response("41 1F 01 2C")
+        fuel = decode_pid_response("41 2F 80")
+        ambient = decode_pid_response("41 46 50")
+        oil = decode_pid_response("41 5C 78")
+        self.assertEqual(runtime.value, 300)
+        self.assertAlmostEqual(fuel.value, 50.196, places=3)
+        self.assertEqual(ambient.value, 40)
+        self.assertEqual(oil.value, 80)
+
+    def test_freeze_frame_uses_mode_02_positive_service(self):
+        item = decode_pid_response("42 0C 01 F4", positive_service=0x42)
+        self.assertEqual(item.value, 125.0)
+
     def test_rejects_wrong_service_and_unknown_pid(self):
         with self.assertRaises(DecoderError):
             decode_pid_response("43 00 00")
@@ -35,6 +50,18 @@ class DecoderTests(unittest.TestCase):
     def test_dtc_encoding(self):
         codes = decode_dtc_response("43 01 33 C1 23 00 00")
         self.assertEqual([item.code for item in codes], ["P0133", "U0123"])
+
+    def test_pending_and_permanent_dtc_services(self):
+        pending = decode_dtc_response("47 01 33 00 00", status="pending", positive_service=0x47)
+        permanent = decode_dtc_response(
+            "4A 01 33 00 00", status="permanent", positive_service=0x4A
+        )
+        self.assertEqual(pending[0].status, "pending")
+        self.assertEqual(permanent[0].status, "permanent")
+
+    def test_vin(self):
+        vin = decode_vin_response(b"\x49\x02\x01WVWZZZ1JZXW000001")
+        self.assertEqual(vin, "WVWZZZ1JZXW000001")
 
     def test_readiness(self):
         status = decode_readiness_response("41 01 81 07 01 00")

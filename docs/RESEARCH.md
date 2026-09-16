@@ -39,6 +39,12 @@ an adapter firmware or capability claim.
   stop responding. The implementation therefore uses a finite request budget,
   spacing between requests, supported-PID discovery, and no tight polling.
 
+SafeScan treats Modes 03, 07, and 0A as read services for stored, pending, and
+permanent DTCs respectively. Mode 04 (clear/reset emissions information) is
+not represented by the policy or transport. A vehicle may still omit a mode or
+return a negative response; those bytes are preserved and the session is marked
+incomplete when the scheduler cannot finish.
+
 ## Vehicle coverage boundary
 
 The working profile remains the facts supplied by the user: 2011 Nissan Note
@@ -55,3 +61,9 @@ only allow-listed generic read payloads, waits for the adapter prompt, applies
 finite deadlines and response-size limits, and closes the port on failure. It
 does not expose code clearing, ECU writes, actuator controls, firmware updates,
 arbitrary frames, or a raw command console.
+
+`notescan.diagnostics.SafeScanner` supplies the next application boundary. It
+executes a finite typed plan through the scheduler, decodes generic responses,
+retains the original request and response for each completed exchange, and
+persists incomplete evidence after a transport failure. It does not retry or
+reconnect automatically.

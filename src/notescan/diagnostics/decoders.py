@@ -67,6 +67,10 @@ _PID_NAMES = {
     0x0F: ("Intake air temperature", "°C", 1),
     0x10: ("Mass air flow", "g/s", 2),
     0x11: ("Throttle position", "%", 1),
+    0x1F: ("Runtime since engine start", "s", 2),
+    0x2F: ("Fuel level", "%", 1),
+    0x46: ("Ambient air temperature", "°C", 1),
+    0x5C: ("Engine oil temperature", "°C", 1),
 }
 
 
@@ -81,6 +85,12 @@ def _decode_pid(pid: int, payload: bytes) -> float:
         return ((payload[0] << 8) | payload[1]) / 100
     if pid == 0x11:
         return payload[0] * 100 / 255
+    if pid == 0x1F:
+        return float((payload[0] << 8) | payload[1])
+    if pid == 0x2F:
+        return payload[0] * 100 / 255
+    if pid in (0x46, 0x5C):
+        return payload[0] - 40
     return float(payload[0])
 
 
@@ -90,12 +100,17 @@ def decode_pid_response(
     timestamp: datetime | None = None,
     ecu: str = "engine",
     source: str = "recorded",
+    positive_service: int = 0x41,
 ) -> Measurement:
-    """Decode a positive Mode 01 response such as 41 0C 1A F8."""
+    """Decode a positive Mode 01/02 response such as ``41 0C 1A F8``."""
 
     raw_bytes = parse_hex_bytes(response)
-    if len(raw_bytes) < 3 or raw_bytes[0] != 0x41:
-        raise DecoderError("Expected positive Mode 01 response (41 PID ...)")
+    if not 0x40 <= positive_service <= 0x4F:
+        raise ValueError("positive_service must be in the 0x40..0x4F range")
+    if len(raw_bytes) < 3 or raw_bytes[0] != positive_service:
+        raise DecoderError(
+            f"Expected positive response ({positive_service:02X} PID ... )"
+        )
     pid = raw_bytes[1]
     spec = _PID_NAMES.get(pid)
     if spec is None:
@@ -121,12 +136,22 @@ def decode_dtc_response(
     *,
     ecu: str = "engine",
     status: str = "stored",
+    positive_service: int = 0x43,
 ) -> list[TroubleCode]:
-    """Decode generic Mode 03 response bytes into DTC records."""
+    """Decode a positive generic DTC response into DTC records.
+
+    ``positive_service`` is 0x43 for stored, 0x47 for pending, and 0x4A for
+    permanent codes. Keeping it explicit prevents a response from one mode
+    being silently labelled as another.
+    """
 
     raw_bytes = parse_hex_bytes(response)
-    if not raw_bytes or raw_bytes[0] != 0x43:
-        raise DecoderError("Expected positive Mode 03 response (43 ...)")
+    if not 0x40 <= positive_service <= 0x4F:
+        raise ValueError("positive_service must be in the 0x40..0x4F range")
+    if not raw_bytes or raw_bytes[0] != positive_service:
+        raise DecoderError(
+            f"Expected positive DTC response ({positive_service:02X} ... )"
+        )
     if len(raw_bytes[1:]) % 2:
         raise DecoderError("DTC response must contain complete two-byte records")
     output: list[TroubleCode] = []
@@ -147,6 +172,32 @@ def decode_dtc_response(
             )
         )
     return output
+
+
+def decode_vin_response(
+    response: str | bytes | bytearray | Iterable[int],
+) -> str:
+    """Decode a standard Mode 09 PID 02 VIN response.
+
+    ISO 15765 responses commonly include a one-byte frame count between the
+    ``49 02`` header and the 17 ASCII VIN characters. The count is ignored;
+    all remaining printable bytes are validated as one VIN.
+    """
+
+    raw_bytes = parse_hex_bytes(response)
+    if len(raw_bytes) < 3 or raw_bytes[:2] != bytes((0x49, 0x02)):
+        raise DecoderError("Expected positive Mode 09 PID 02 response (49 02 ...)")
+    payload = raw_bytes[2:]
+    if len(payload) >= 18 and payload[0] <= 0x0F:
+        payload = payload[1:]
+    try:
+        vin = bytes(item for item in payload if 0x20 <= item <= 0x7E).decode("ascii")
+    except UnicodeDecodeError as exc:
+        raise DecoderError("VIN response contained non-ASCII bytes") from exc
+    vin = vin.strip()
+    if len(vin) != 17 or not vin.isalnum():
+        raise DecoderError("VIN response did not contain exactly 17 alphanumeric characters")
+    return vin
 
 
 def decode_readiness_response(
