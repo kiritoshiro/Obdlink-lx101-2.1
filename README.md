@@ -4,4 +4,4 @@ Read-only Windows diagnostic application plan for an OBDLink LX / â€œLX101 2.1â€
 
 The project starts with an offline simulator and evidence viewer. Vehicle communication is staged behind a default-deny command policy. ECU writes, code clearing, actuator tests, relearns, coding, reflashing, and arbitrary CAN frames are outside the initial scope.
 
-The detailed AI implementation specification is stored in the Obsidian project memory so the repository stays focused on source code and configuration.
+The planned code will provide an offline simulator, bounded read-only OBD-II engine diagnostics, evidence-preserving session history, and guided interpretation for safer troubleshooting. Vehicle-writing operations and arbitrary diagnostic commands are outside the initial scope.
