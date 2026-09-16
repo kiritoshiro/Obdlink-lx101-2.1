@@ -4,4 +4,4 @@ Read-only Windows diagnostic application plan for an OBDLink LX / â€œLX101 2.1â€
 
 The project starts with an offline simulator and evidence viewer. Vehicle communication is staged behind a default-deny command policy. ECU writes, code clearing, actuator tests, relearns, coding, reflashing, and arbitrary CAN frames are outside the initial scope.
 
-See [the AI implementation specification](docs/Nissan-Note-SafeScan-AI-Implementation-Plan.md) for the staged architecture, validation gates, and coding instructions.
+The detailed AI implementation specification is stored in the Obsidian project memory so the repository stays focused on source code and configuration.
