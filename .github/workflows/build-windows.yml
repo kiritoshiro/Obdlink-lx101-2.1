@@ -1,0 +1,51 @@
+name: Build Windows application
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package SafeScan on Windows
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install packaging dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,package]"
+
+      - name: Run release checks
+        shell: pwsh
+        run: |
+          python -m ruff check .
+          python -m mypy src
+          python -m pytest -q --cov=notescan --cov-report=term-missing
+
+      - name: Build one-folder executable
+        shell: pwsh
+        run: .\packaging\windows\build.ps1 -Clean -CreateZip
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: SafeScan-windows-${{ github.ref_name }}
+          path: |
+            dist/SafeScan-windows.zip
+            dist/SafeScan/SafeScan.exe
+          if-no-files-found: error
+          retention-days: 14
