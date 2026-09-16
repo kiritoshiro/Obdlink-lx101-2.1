@@ -1,0 +1,76 @@
+name: Bug report
+description: Report a reproducible problem in SafeScan.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for a reproducible software problem. Do not include a VIN,
+        registration number, or other identifying vehicle information.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and what you expected instead.
+      placeholder: Tell us what happened.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Include the smallest sequence that consistently shows the problem.
+      placeholder: |
+        1. Open ...
+        2. Select ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: SafeScan version or commit
+      placeholder: 0.1.0 or commit SHA
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: Windows 11 24H2
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: 3.12.6
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Connection context
+      description: Select where the problem occurred.
+      options:
+        - Offline simulator
+        - Imported session or report
+        - Live read-only scan
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or diagnostic session ID
+      description: Paste relevant logs with personal and vehicle identifiers removed. Attach the exported session only if it contains no sensitive data.
+      render: text
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety checks
+      options:
+        - label: The vehicle was stationary and safely parked when a live scan was performed.
+          required: true
+        - label: I removed VINs, registration details, location data, and other personal information.
+          required: true
+

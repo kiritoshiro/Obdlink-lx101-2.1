@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Python ${{ matrix.python-version }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install project and development tools
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Run Ruff
+        run: python -m ruff check .
+
+      - name: Run mypy
+        shell: pwsh
+        run: |
+          if (Test-Path -LiteralPath "src") {
+            python -m mypy src
+          } else {
+            Write-Host "No src directory yet; type check skipped."
+          }
+
+      - name: Run tests
+        shell: pwsh
+        run: |
+          if (Test-Path -LiteralPath "tests") {
+            python -m pytest -q --cov=notescan --cov-report=term-missing
+          } else {
+            Write-Host "No tests directory yet; test run skipped."
+          }

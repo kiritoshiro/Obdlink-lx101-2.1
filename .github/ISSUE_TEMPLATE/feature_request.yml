@@ -1,0 +1,49 @@
+name: Feature request
+description: Propose a useful, bounded improvement to SafeScan.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What user problem or diagnostic workflow is not served today?
+      placeholder: I need to ... because ...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the result you would like, including an example if helpful.
+    validations:
+      required: true
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Feature area
+      options:
+        - Offline simulator
+        - Generic OBD-II read-only diagnostics
+        - Session history or export
+        - Guided interpretation
+        - User interface
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety and evidence considerations
+      description: Explain how this can remain read-only, bounded, and evidence-preserving. Identify any assumptions or vehicle coverage needed.
+    validations:
+      required: true
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Scope acknowledgement
+      options:
+        - label: I understand proposals involving ECU writes, code clearing, actuator tests, relearns, coding, reflashing, or arbitrary commands require separate safety review.
+          required: true
+
