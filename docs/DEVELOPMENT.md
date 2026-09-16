@@ -44,6 +44,16 @@ docs/               development and validation notes
 
 Keep transport, protocol parsing, persistence, interpretation, and UI code in separate modules. The UI should call typed application services; it should not construct raw adapter commands or decode bytes itself.
 
+## Live viewer path
+
+The **Live scan…** action in the viewer asks for a Windows COM port and a
+stationary-vehicle confirmation before creating `SerialTransport` and
+`SafeScanner` in a worker thread. A stop request is observed at scheduler
+boundaries; there is no reconnect or retry loop. Completed and partial sessions
+are saved below `%LOCALAPPDATA%\SafeScan\sessions` unless `run(storage_root=...)`
+was given an explicit directory. The viewer never discovers or connects to a
+port on its own.
+
 ## Safety boundary for contributions
 
 Every new live operation must be explicitly allow-listed, bounded by a timeout and poll budget, cancellable, and covered by an offline test. The first release must not transmit ECU writes, clear fault codes, run actuator tests, perform relearns or coding, reflash modules, or send arbitrary CAN frames. Do not add a raw-command console as a debugging shortcut.

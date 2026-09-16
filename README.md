@@ -17,7 +17,7 @@ python -m pip install -e ".[dev]"
 python -m notescan
 ```
 
-The viewer starts with a synthetic Nissan Note profile and does not connect to a vehicle. The live transport requires an explicitly selected, already paired Windows COM port and is not wired to an unattended scan workflow.
+The viewer starts with a synthetic Nissan Note profile and does not connect to a vehicle. To run a live session, use **Live scan…**, enter the explicitly selected and already paired Windows COM port, and confirm the parked-vehicle prompt. The scan runs in a cancellable worker, saves evidence under the per-user SafeScan session directory, and is never started automatically or unattended.
 
 Further implementation details are in [the development guide](docs/DEVELOPMENT.md), [the validation strategy](docs/VALIDATION.md), [the transport research](docs/RESEARCH.md), and [the Windows packaging guide](docs/PACKAGING.md).
 

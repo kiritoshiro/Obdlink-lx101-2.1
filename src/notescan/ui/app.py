@@ -7,23 +7,30 @@ files or a deterministic synthetic demo.
 
 from __future__ import annotations
 
+import os
 import sys
+import threading
 from pathlib import Path
+from typing import cast
 
 from notescan.diagnostics.analyzer import analyze_session
+from notescan.diagnostics.scanner import SafeScanner, ScanCapture
 from notescan.diagnostics.simulator import build_demo_session
 from notescan.domain.models import DiagnosticSession
 from notescan.reports.render import write_report
+from notescan.safety.scheduler import SafeScheduler
 from notescan.storage.json_store import SessionStore
+from notescan.transport import SerialConfig, SerialTransport
 
 try:
-    from PySide6.QtCore import Qt
-    from PySide6.QtGui import QAction
+    from PySide6.QtCore import Qt, QThread, Signal
+    from PySide6.QtGui import QAction, QCloseEvent
     from PySide6.QtWidgets import (
         QAbstractItemView,
         QApplication,
         QFileDialog,
         QHBoxLayout,
+        QInputDialog,
         QLabel,
         QListWidget,
         QMainWindow,
@@ -45,16 +52,55 @@ except ImportError:  # pragma: no cover - exercised on machines without PySide6
 
 if QT_AVAILABLE:
 
+    def default_storage_root() -> Path:
+        """Return the per-user directory for live session evidence."""
+
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        base = Path(local_app_data) if local_app_data else Path.home() / ".safescan"
+        return base / "SafeScan" / "sessions"
+
+
+    class ScanWorker(QThread):
+        """Run one explicit live scan away from the Qt event loop."""
+
+        completed = Signal(object)
+        failed = Signal(str)
+
+        def __init__(self, port: str, storage_root: Path, parent: QWidget | None = None) -> None:
+            super().__init__(parent)
+            self.port = port
+            self.storage_root = storage_root
+            self._stop_requested = threading.Event()
+
+        def request_stop(self) -> None:
+            self._stop_requested.set()
+
+        def run(self) -> None:  # pragma: no cover - exercised through a live Qt session
+            try:
+                transport = SerialTransport(SerialConfig(self.port))
+                scanner = SafeScanner(
+                    SafeScheduler(transport),
+                    store=SessionStore(self.storage_root),
+                )
+                capture = scanner.run(stop_check=self._stop_requested.is_set)
+            except Exception as exc:
+                self.failed.emit(str(exc))
+                return
+            self.completed.emit(capture)
+
     class SessionViewer(QMainWindow):
-        """Review preserved sessions; there are no live vehicle controls."""
+        """Review preserved sessions and start explicit read-only live scans."""
 
         def __init__(
             self,
             sessions: list[DiagnosticSession],
+            storage_root: Path | None = None,
             parent: QWidget | None = None,
         ) -> None:
             super().__init__(parent)
             self.sessions = sessions
+            self.storage_root = storage_root
+            self._scan_worker: ScanWorker | None = None
             self.setWindowTitle("SafeScan · Offline evidence viewer")
             self.resize(1100, 720)
             self.setMinimumSize(850, 560)
@@ -66,6 +112,9 @@ if QT_AVAILABLE:
             export = QAction("Export &report…", self)
             export.triggered.connect(self._export_report)
             menu.addAction(export)
+            live_scan = QAction("Start &live read-only scan…", self)
+            live_scan.triggered.connect(self._start_live_scan)
+            menu.addAction(live_scan)
             close = QAction("&Quit", self)
             close.triggered.connect(self.close)
             menu.addAction(close)
@@ -85,6 +134,17 @@ if QT_AVAILABLE:
             self.export_button.setToolTip("Save a Markdown or HTML copy of the selected evidence")
             self.export_button.clicked.connect(self._export_report)
             header.addWidget(self.export_button)
+            self.live_button = QPushButton("Live scan…")
+            self.live_button.setToolTip(
+                "Connect to one already-paired Windows COM port and run the finite read-only plan"
+            )
+            self.live_button.clicked.connect(self._start_live_scan)
+            header.addWidget(self.live_button)
+            self.cancel_button = QPushButton("Stop scan")
+            self.cancel_button.setToolTip("Stop after the current bounded request")
+            self.cancel_button.clicked.connect(self._cancel_live_scan)
+            self.cancel_button.setEnabled(False)
+            header.addWidget(self.cancel_button)
             outer.addLayout(header)
 
             self.coverage = QLabel()
@@ -201,6 +261,93 @@ if QT_AVAILABLE:
             row = self.session_list.currentRow()
             return self.sessions[row] if 0 <= row < len(self.sessions) else None
 
+        def _start_live_scan(self) -> None:
+            if self._scan_worker is not None:
+                return
+            port, accepted = QInputDialog.getText(
+                self,
+                "Paired OBDLink COM port",
+                "Windows COM port (for example, COM7):",
+                text="COM",
+            )
+            if not accepted:
+                return
+            try:
+                config = SerialConfig(port.strip())
+            except ValueError as exc:
+                QMessageBox.warning(self, "Invalid COM port", str(exc))
+                return
+            confirmation = QMessageBox.question(
+                self,
+                "Confirm stationary read-only scan",
+                (
+                    "Confirm the Nissan Note is safely parked with the ignition on, "
+                    "the adapter already paired in Windows, and no other OBD app is connected.\n\n"
+                    "SafeScan will send only the finite generic read-only plan."
+                ),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if confirmation is not QMessageBox.StandardButton.Yes:
+                return
+            storage_root = self.storage_root or default_storage_root()
+            self._scan_worker = ScanWorker(config.port, storage_root, self)
+            self._scan_worker.completed.connect(self._live_scan_completed)
+            self._scan_worker.failed.connect(self._live_scan_failed)
+            self._set_scan_controls(running=True)
+            self.status.setText(
+                f"Connecting to {config.port}; stop is available at request boundaries…"
+            )
+            self._scan_worker.start()
+
+        def _cancel_live_scan(self) -> None:
+            if self._scan_worker is None:
+                return
+            self._scan_worker.request_stop()
+            self.cancel_button.setEnabled(False)
+            self.status.setText("Stopping after the current bounded request…")
+
+        def _set_scan_controls(self, *, running: bool) -> None:
+            self.live_button.setEnabled(not running)
+            self.export_button.setEnabled(not running)
+            self.cancel_button.setEnabled(running)
+
+        def _live_scan_completed(self, value: object) -> None:
+            worker = self._scan_worker
+            self._scan_worker = None
+            self._set_scan_controls(running=False)
+            capture = cast(ScanCapture, value)
+            self.sessions.insert(0, capture.session)
+            self._populate_sessions()
+            self.session_list.setCurrentRow(0)
+            saved = f" Saved to {capture.saved_path.name}." if capture.saved_path else ""
+            self.status.setText(
+                f"Live scan {capture.report.state.value}: "
+                f"{len(capture.report.results)} bounded responses.{saved}"
+            )
+            if worker is not None:
+                worker.deleteLater()
+
+        def _live_scan_failed(self, message: str) -> None:
+            worker = self._scan_worker
+            self._scan_worker = None
+            self._set_scan_controls(running=False)
+            self.status.setText("Live scan could not start.")
+            QMessageBox.critical(self, "Live scan failed", message)
+            if worker is not None:
+                worker.deleteLater()
+
+        def closeEvent(self, event: QCloseEvent) -> None:
+            if self._scan_worker is not None:
+                QMessageBox.information(
+                    self,
+                    "Scan still running",
+                    "Stop the live scan and wait for its saved evidence before closing.",
+                )
+                event.ignore()
+                return
+            event.accept()
+
         def _export_report(self) -> None:
             session = self._selected()
             if session is None:
@@ -240,7 +387,7 @@ def run(storage_root: str | Path | None = None) -> int:
         sessions = SessionStore(storage_root).list_sessions()
     if not sessions:
         sessions = [build_demo_session()]
-    window = SessionViewer(sessions)
+    window = SessionViewer(sessions, storage_root=Path(storage_root) if storage_root else None)
     window.show()
     return app.exec()
 
