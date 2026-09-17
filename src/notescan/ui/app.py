@@ -382,12 +382,12 @@ def run(storage_root: str | Path | None = None) -> int:
             "PySide6 is required for the desktop viewer; data tools remain available offline."
         )
     app = QApplication.instance() or QApplication(sys.argv)
+    resolved_storage_root = Path(storage_root) if storage_root else default_storage_root()
     sessions: list[DiagnosticSession] = []
-    if storage_root is not None:
-        sessions = SessionStore(storage_root).list_sessions()
+    sessions = SessionStore(resolved_storage_root).list_sessions()
     if not sessions:
         sessions = [build_demo_session()]
-    window = SessionViewer(sessions, storage_root=Path(storage_root) if storage_root else None)
+    window = SessionViewer(sessions, storage_root=resolved_storage_root)
     window.show()
     return app.exec()
 
