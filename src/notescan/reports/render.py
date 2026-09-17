@@ -57,8 +57,13 @@ def render_session_markdown(session: DiagnosticSession) -> str:
             f"- **{item.code}** ({item.status}, {item.ecu}): {item.description}"
             for item in session.trouble_codes
         )
+    elif isinstance(session.metadata.get("decoded_operations"), list):
+        if "stored_codes" in session.metadata["decoded_operations"]:
+            lines.append("- None reported in the preserved generic Mode 03 response.")
+        else:
+            lines.append("- Not determined: no stored-code read was decoded in this session.")
     else:
-        lines.append("- None reported in the preserved generic Mode 03 response.")
+        lines.append("- None recorded in this session; the stored-code read is not confirmed.")
     lines.extend(["", "## Readiness", ""])
     if session.readiness:
         lines.append(f"- MIL on: {session.readiness.mil_on}")
@@ -105,12 +110,14 @@ def render_session_html(session: DiagnosticSession) -> str:
     """Create a self-contained, printable HTML report."""
 
     markdown = render_session_markdown(session)
-    body = html.escape(markdown).replace("\n", "<br>\n")
+    # The body sits inside a pre-wrap block, which already breaks on newlines;
+    # adding <br> as well doubled the line spacing of every exported report.
+    body = html.escape(markdown)
     return (
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
         "<title>SafeScan evidence report</title>"
         "<style>body{font:15px system-ui;max-width:1000px;margin:2rem auto;padding:0 1rem;"
-        "color:#19324a}br{line-height:1.65}</style></head>"
+        "color:#19324a}pre{line-height:1.65}</style></head>"
         f"<body><pre style=\"white-space:pre-wrap\">{body}</pre></body></html>"
     )
 

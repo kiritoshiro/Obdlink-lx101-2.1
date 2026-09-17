@@ -22,7 +22,7 @@ def test_default_plan_is_finite_and_read_only() -> None:
 
 def test_scanner_decodes_and_persists_generic_evidence(tmp_path) -> None:
     responses = {
-        b"\x01\x01": b"41 01 00 07 07",
+        b"\x01\x01": b"41 01 00 07 07 00",
         b"\x09\x02": b"\x49\x02\x01WVWZZZ1JZXW000001",
         b"\x03": b"43 01 33 00 00",
         b"\x07": b"47 00 00",
@@ -56,9 +56,9 @@ def test_scanner_decodes_and_persists_generic_evidence(tmp_path) -> None:
     assert [(item.code, item.status) for item in capture.session.trouble_codes] == [
         ("P0133", "stored")
     ]
-    assert capture.session.raw_frames[0]["response"] == "41 01 00 07 07"
+    assert capture.session.raw_frames[0]["response"] == "41 01 00 07 07 00"
     assert capture.session.raw_frames[0]["response_bytes"] == (
-        "34 31 20 30 31 20 30 30 20 30 37 20 30 37"
+        "34 31 20 30 31 20 30 30 20 30 37 20 30 37 20 30 30"
     )
     assert len(capture.session.raw_frames) == 6
 
@@ -132,7 +132,7 @@ def test_default_scan_filters_live_pids_using_discovery() -> None:
     transport = FakeTransport(
         {
             b"\x01\x00": b"41 00 80 00 00 01",  # advertise PID 01 and 20 only
-            b"\x01\x01": b"41 01 00 07 07",
+            b"\x01\x01": b"41 01 00 07 07 00",
             b"\x09\x02": b"\x49\x02\x01WVWZZZ1JZXW000001",
             b"\x03": b"43 00 00",
             b"\x07": b"47 00 00",
@@ -164,7 +164,7 @@ def test_default_scan_fails_closed_when_support_discovery_is_negative() -> None:
     transport = FakeTransport(
         {
             b"\x01\x00": b"7F 01 12",
-            b"\x01\x01": b"41 01 00 07 07",
+            b"\x01\x01": b"41 01 00 07 07 00",
             b"\x09\x02": b"\x49\x02\x01WVWZZZ1JZXW000001",
             b"\x03": b"43 00 00",
             b"\x07": b"47 00 00",

@@ -16,12 +16,13 @@ from typing import Any
 from uuid import uuid4
 
 from notescan.domain.models import DiagnosticSession, VehicleProfile, utc_now
-from notescan.safety.operations import DiagnosticRequest, Operation
+from notescan.safety.operations import DiagnosticRequest, Operation, ValidatedRequest
 from notescan.safety.policy import LIVE_DATA_PIDS
 from notescan.safety.scheduler import SafeScheduler, ScanReport, ScanResult, SessionState
 from notescan.storage.json_store import SessionStore
 
 from .decoders import (
+    AdapterStatusResponse,
     DecoderError,
     decode_dtc_response,
     decode_negative_response,
@@ -106,6 +107,7 @@ class SafeScanner:
         )
         session.metadata.update(self._transport_metadata(len(plan)))
         session.metadata["executed_plan_requests"] = len(report.results)
+        session.metadata["decoded_operations"] = []
         session.metadata["requested_live_pids"] = [
             f"{request.pid:02X}"
             for request in plan
@@ -135,48 +137,51 @@ class SafeScanner:
         """Run a plan, discovering supported live PIDs before default reads.
 
         Explicit plans stay exactly as supplied. The generic default plan is
-        split into a one-request support discovery pass and a bounded second
-        pass. If discovery cannot be decoded, all live requests are skipped;
-        the scanner never guesses at ECU capability.
+        reordered so support discovery runs first, and the live reads that
+        follow are dropped unless the ECU advertised them. If discovery cannot
+        be decoded, every live request is skipped; the scanner never guesses at
+        ECU capability.
+
+        The whole plan runs inside one scheduler session so the adapter is
+        opened, initialised and protocol-detected exactly once. Reopening the
+        port between the two passes would reset the adapter mid-scan and make
+        the first request of the second pass pay for protocol detection again.
         """
 
         if not adaptive:
             return self.scheduler.run(plan, stop_check=stop_check), None
 
-        discovery = self.scheduler.run(
-            (DiagnosticRequest(Operation.SUPPORTED_PIDS, 0x00),),
-            stop_check=stop_check,
-        )
-        if discovery.state is not SessionState.COMPLETE:
-            return discovery, None
-
-        supported = self._supported_pids(discovery)
+        discovery = DiagnosticRequest(Operation.SUPPORTED_PIDS, 0x00)
         non_live = tuple(
             request
             for request in plan
             if request.operation not in {Operation.SUPPORTED_PIDS, Operation.LIVE_DATA}
         )
-        if supported is None:
-            second_plan = non_live
+        live = tuple(request for request in plan if request.operation is Operation.LIVE_DATA)
+        ordered = (discovery, *non_live, *live)
+
+        state: dict[str, Any] = {"supported": None, "resolved": False}
+
+        def keep(request: ValidatedRequest, results: tuple[ScanResult, ...]) -> bool:
+            if request.operation is not Operation.LIVE_DATA:
+                return True
+            if not state["resolved"]:
+                state["supported"] = self._supported_pids_from_results(results)
+                state["resolved"] = True
+            supported = state["supported"]
+            return supported is not None and request.pid in supported
+
+        report = self.scheduler.run(ordered, stop_check=stop_check, request_filter=keep)
+        skip_reason = None
+        if state["resolved"] and state["supported"] is None:
             skip_reason = (
                 "Supported-PID discovery was unavailable; live PID requests were skipped."
             )
-        else:
-            second_plan = non_live + tuple(
-                request
-                for request in plan
-                if request.operation is Operation.LIVE_DATA
-                and request.pid is not None
-                and request.pid in supported
-            )
-            skip_reason = None
-
-        second = self.scheduler.run(second_plan, stop_check=stop_check)
-        return self._combine_reports(discovery, second), skip_reason
+        return report, skip_reason
 
     @staticmethod
-    def _supported_pids(report: ScanReport) -> frozenset[int] | None:
-        for result in report.results:
+    def _supported_pids_from_results(results: tuple[ScanResult, ...]) -> frozenset[int] | None:
+        for result in results:
             if result.operation is not Operation.SUPPORTED_PIDS:
                 continue
             try:
@@ -184,17 +189,6 @@ class SafeScanner:
             except (DecoderError, ValueError):
                 return None
         return None
-
-    @staticmethod
-    def _combine_reports(first: ScanReport, second: ScanReport) -> ScanReport:
-        """Preserve discovery evidence while returning the second-pass state."""
-
-        error = second.error or first.error
-        return ScanReport(
-            state=second.state,
-            results=first.results + second.results,
-            error=error,
-        )
 
     @staticmethod
     def _new_session_id(started_at: datetime) -> str:
@@ -231,6 +225,19 @@ class SafeScanner:
             return text
         return value.hex(" ").upper()
 
+    @staticmethod
+    def _mark_decoded(session: DiagnosticSession, operation: Operation) -> None:
+        """Record that an operation produced a decoded result.
+
+        Downstream reports must be able to tell "the ECU reported nothing" from
+        "this read never produced a usable response", so absence of evidence is
+        never rendered as evidence of absence.
+        """
+
+        decoded = session.metadata.setdefault("decoded_operations", [])
+        if isinstance(decoded, list) and operation.value not in decoded:
+            decoded.append(operation.value)
+
     def _record_result(self, session: DiagnosticSession, result: ScanResult) -> None:
         response_text = result.response.decode("ascii", errors="replace").strip()
         if not response_text or any(ord(char) < 0x20 for char in response_text):
@@ -248,6 +255,12 @@ class SafeScanner:
         )
         try:
             negative = decode_negative_response(result.response)
+        except AdapterStatusResponse as status:
+            session.notes.append(
+                f"Adapter reported {status.status} for {result.operation.value}; "
+                "no ECU data was returned."
+            )
+            return
         except DecoderError:
             negative = None
         if negative is not None:
@@ -312,6 +325,12 @@ class SafeScanner:
                         + ", ".join(f"0x{pid:02X}" for pid in unsupported)
                         + "."
                     )
+            self._mark_decoded(session, result.operation)
+        except AdapterStatusResponse as status:
+            session.notes.append(
+                f"Adapter reported {status.status} for {result.operation.value}; "
+                "no ECU data was returned."
+            )
         except (DecoderError, ValueError) as exc:
             session.notes.append(
                 f"Could not decode {result.operation.value} response: {exc}"

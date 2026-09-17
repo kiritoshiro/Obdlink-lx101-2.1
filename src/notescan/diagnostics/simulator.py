@@ -35,6 +35,18 @@ def build_demo_session(session_id: str = "demo-warm-idle") -> DiagnosticSession:
             },
         ),
         notes=["Synthetic replay data; no vehicle connection was made."],
+        # The demo stands in for a session whose generic reads all decoded, so
+        # the viewer shows the same evidence wording a real capture would.
+        metadata={
+            "decoded_operations": [
+                "supported_pids",
+                "readiness",
+                "stored_codes",
+                "pending_codes",
+                "permanent_codes",
+                "live_data",
+            ]
+        },
     )
     rows = (
         ("0105", "Coolant temperature", 86.0, "°C"),

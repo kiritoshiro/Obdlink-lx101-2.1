@@ -396,7 +396,7 @@ if QT_AVAILABLE:
             format_name = "html" if "HTML" in selected_filter else "md"
             try:
                 write_report(session, target, format=format_name)
-            except OSError as exc:
+            except (OSError, ValueError) as exc:
                 QMessageBox.critical(self, "Export failed", str(exc))
                 return
             self.status.setText(f"Report saved: {Path(target).name}")
@@ -411,8 +411,7 @@ def run(storage_root: str | Path | None = None) -> int:
         )
     app = QApplication.instance() or QApplication(sys.argv)
     resolved_storage_root = Path(storage_root) if storage_root else default_storage_root()
-    sessions: list[DiagnosticSession] = []
-    sessions = SessionStore(resolved_storage_root).list_sessions()
+    sessions: list[DiagnosticSession] = SessionStore(resolved_storage_root).list_sessions()
     if not sessions:
         sessions = [build_demo_session()]
     window = SessionViewer(sessions, storage_root=resolved_storage_root)

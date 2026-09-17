@@ -22,6 +22,20 @@ def _average(items: list[Measurement]) -> float | None:
     return sum(item.value for item in items) / len(items) if items else None
 
 
+def _operation_decoded(session: DiagnosticSession, operation: str) -> bool | None:
+    """Return whether an operation decoded, or ``None`` when unrecorded.
+
+    Sessions written before the scanner tracked this, and synthetic sessions,
+    carry no such record; those are reported as unknown rather than as a
+    confirmed negative.
+    """
+
+    decoded = session.metadata.get("decoded_operations")
+    if not isinstance(decoded, list):
+        return None
+    return operation in decoded
+
+
 def analyze_session(session: DiagnosticSession) -> list[Finding]:
     findings: list[Finding] = []
     grouped = _by_name(session)
@@ -52,6 +66,7 @@ def analyze_session(session: DiagnosticSession) -> list[Finding]:
             )
         )
 
+    stored_codes_decoded = _operation_decoded(session, "stored_codes")
     if session.trouble_codes:
         for dtc in session.trouble_codes:
             findings.append(
@@ -70,7 +85,7 @@ def analyze_session(session: DiagnosticSession) -> list[Finding]:
                     confidence="high",
                 )
             )
-    else:
+    elif stored_codes_decoded is True:
         findings.append(
             Finding(
                 title="No stored generic engine codes",
@@ -81,6 +96,23 @@ def analyze_session(session: DiagnosticSession) -> list[Finding]:
                 ),
                 evidence=("Mode 03 response contained no non-zero code records.",),
                 confidence="medium",
+            )
+        )
+    else:
+        findings.append(
+            Finding(
+                title="Stored codes were not confirmed",
+                severity="info",
+                message=(
+                    "This session contains no decoded Mode 03 response, so the "
+                    "absence of trouble codes is not evidence that none are stored."
+                ),
+                evidence=(
+                    "No stored-code read completed."
+                    if stored_codes_decoded is False
+                    else "This session does not record which reads were decoded.",
+                ),
+                confidence="high",
             )
         )
 

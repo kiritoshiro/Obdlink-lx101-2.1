@@ -10,7 +10,7 @@ from time import monotonic, sleep
 from notescan.transport.base import DiagnosticTransport
 
 from .errors import SafetyError, SessionLimitExceeded
-from .operations import DiagnosticRequest, Operation, encode_request
+from .operations import DiagnosticRequest, Operation, ValidatedRequest, encode_request
 from .policy import SafetyPolicy
 
 
@@ -111,12 +111,19 @@ class SafeScheduler:
         requests: Iterable[DiagnosticRequest],
         *,
         stop_check: Callable[[], bool] | None = None,
+        request_filter: Callable[[ValidatedRequest, tuple[ScanResult, ...]], bool] | None = None,
     ) -> ScanReport:
         """Run requests and return evidence, including partial scans.
 
         All policy checks happen before ``transport.open``.  ``stop_check`` is
         injected for a GUI cancel button and remains an observation only; it
         cannot alter or submit a command.
+
+        ``request_filter`` may drop an already-validated request in light of the
+        responses received so far, which lets one session adapt to what the ECU
+        advertises without reopening the transport.  It can only remove work:
+        it never sees an unvalidated request and cannot add, alter or reorder
+        one, so the pre-open validation guarantee is unchanged.
         """
 
         if self._session and self._session.state in {
@@ -145,11 +152,13 @@ class SafeScheduler:
                 session.state = SessionState.FAILED
                 return ScanReport(session.state, tuple(results), session.failure)
             session.state = SessionState.READY
-            for index, request in enumerate(validated):
+            for request in validated:
                 if session.stop_requested or (stop_check is not None and stop_check()):
                     session.state = SessionState.STOPPED
                     break
-                if index:
+                if request_filter is not None and not request_filter(request, tuple(results)):
+                    continue
+                if session.requests_sent:
                     self._sleep(self.config.min_interval_s)
                     if session.stop_requested or (stop_check is not None and stop_check()):
                         session.state = SessionState.STOPPED
