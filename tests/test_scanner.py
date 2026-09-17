@@ -126,3 +126,65 @@ def test_scanner_records_supported_pids_and_negative_responses() -> None:
     assert any("not advertised" in note for note in capture.session.notes)
     assert any("negative response" in note for note in capture.session.notes)
     assert capture.session.measurements == []
+
+
+def test_default_scan_filters_live_pids_using_discovery() -> None:
+    transport = FakeTransport(
+        {
+            b"\x01\x00": b"41 00 80 00 00 01",  # advertise PID 01 and 20 only
+            b"\x01\x01": b"41 01 00 07 07",
+            b"\x09\x02": b"\x49\x02\x01WVWZZZ1JZXW000001",
+            b"\x03": b"43 00 00",
+            b"\x07": b"47 00 00",
+            b"\x0A": b"4A 00 00",
+        }
+    )
+    scanner = SafeScanner(
+        SafeScheduler(transport, config=SchedulerConfig(min_interval_s=0)),
+    )
+
+    capture = scanner.run(session_id="adaptive-1")
+
+    assert capture.session.complete
+    assert transport.requests == [
+        b"\x01\x00",
+        b"\x01\x01",
+        b"\x09\x02",
+        b"\x03",
+        b"\x07",
+        b"\x0A",
+    ]
+    assert capture.session.metadata["scan_plan_requests"] == 19
+    assert capture.session.metadata["executed_plan_requests"] == 6
+    assert capture.session.metadata["supported_pids"] == ["01", "20"]
+    assert any("not advertised" in note for note in capture.session.notes)
+
+
+def test_default_scan_fails_closed_when_support_discovery_is_negative() -> None:
+    transport = FakeTransport(
+        {
+            b"\x01\x00": b"7F 01 12",
+            b"\x01\x01": b"41 01 00 07 07",
+            b"\x09\x02": b"\x49\x02\x01WVWZZZ1JZXW000001",
+            b"\x03": b"43 00 00",
+            b"\x07": b"47 00 00",
+            b"\x0A": b"4A 00 00",
+        }
+    )
+    scanner = SafeScanner(
+        SafeScheduler(transport, config=SchedulerConfig(min_interval_s=0)),
+    )
+
+    capture = scanner.run(session_id="adaptive-negative-1")
+
+    assert capture.session.complete
+    assert transport.requests == [
+        b"\x01\x00",
+        b"\x01\x01",
+        b"\x09\x02",
+        b"\x03",
+        b"\x07",
+        b"\x0A",
+    ]
+    assert capture.session.metadata["executed_plan_requests"] == 6
+    assert any("live PID requests were skipped" in note for note in capture.session.notes)

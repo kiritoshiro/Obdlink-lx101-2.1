@@ -90,8 +90,13 @@ class SafeScanner:
 
         started_at = self._now()
         identifier = session_id or self._new_session_id(started_at)
+        is_default_plan = requests is None
         plan = tuple(requests) if requests is not None else default_scan_requests()
-        report = self.scheduler.run(plan, stop_check=stop_check)
+        report, live_skip_reason = self._run_plan(
+            plan,
+            adaptive=is_default_plan,
+            stop_check=stop_check,
+        )
         session = DiagnosticSession(
             session_id=identifier,
             vehicle=VehicleProfile.from_dict(self.vehicle.to_dict()),
@@ -100,11 +105,14 @@ class SafeScanner:
             complete=report.state is SessionState.COMPLETE,
         )
         session.metadata.update(self._transport_metadata(len(plan)))
+        session.metadata["executed_plan_requests"] = len(report.results)
         session.metadata["requested_live_pids"] = [
             f"{request.pid:02X}"
             for request in plan
             if request.operation is Operation.LIVE_DATA and request.pid is not None
         ]
+        if live_skip_reason:
+            session.notes.append(live_skip_reason)
         for result in report.results:
             self._record_result(session, result)
         if report.error:
@@ -116,6 +124,77 @@ class SafeScanner:
         if self.store is not None:
             saved_path = self.store.save(session)
         return ScanCapture(session=session, report=report, saved_path=saved_path)
+
+    def _run_plan(
+        self,
+        plan: tuple[DiagnosticRequest, ...],
+        *,
+        adaptive: bool,
+        stop_check: Callable[[], bool] | None,
+    ) -> tuple[ScanReport, str | None]:
+        """Run a plan, discovering supported live PIDs before default reads.
+
+        Explicit plans stay exactly as supplied. The generic default plan is
+        split into a one-request support discovery pass and a bounded second
+        pass. If discovery cannot be decoded, all live requests are skipped;
+        the scanner never guesses at ECU capability.
+        """
+
+        if not adaptive:
+            return self.scheduler.run(plan, stop_check=stop_check), None
+
+        discovery = self.scheduler.run(
+            (DiagnosticRequest(Operation.SUPPORTED_PIDS, 0x00),),
+            stop_check=stop_check,
+        )
+        if discovery.state is not SessionState.COMPLETE:
+            return discovery, None
+
+        supported = self._supported_pids(discovery)
+        non_live = tuple(
+            request
+            for request in plan
+            if request.operation not in {Operation.SUPPORTED_PIDS, Operation.LIVE_DATA}
+        )
+        if supported is None:
+            second_plan = non_live
+            skip_reason = (
+                "Supported-PID discovery was unavailable; live PID requests were skipped."
+            )
+        else:
+            second_plan = non_live + tuple(
+                request
+                for request in plan
+                if request.operation is Operation.LIVE_DATA
+                and request.pid is not None
+                and request.pid in supported
+            )
+            skip_reason = None
+
+        second = self.scheduler.run(second_plan, stop_check=stop_check)
+        return self._combine_reports(discovery, second), skip_reason
+
+    @staticmethod
+    def _supported_pids(report: ScanReport) -> frozenset[int] | None:
+        for result in report.results:
+            if result.operation is not Operation.SUPPORTED_PIDS:
+                continue
+            try:
+                return decode_supported_pids_response(result.response)
+            except (DecoderError, ValueError):
+                return None
+        return None
+
+    @staticmethod
+    def _combine_reports(first: ScanReport, second: ScanReport) -> ScanReport:
+        """Preserve discovery evidence while returning the second-pass state."""
+
+        error = second.error or first.error
+        return ScanReport(
+            state=second.state,
+            results=first.results + second.results,
+            error=error,
+        )
 
     @staticmethod
     def _new_session_id(started_at: datetime) -> str:

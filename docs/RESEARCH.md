@@ -62,8 +62,12 @@ finite deadlines and response-size limits, and closes the port on failure. It
 does not expose code clearing, ECU writes, actuator controls, firmware updates,
 arbitrary frames, or a raw command console.
 
-`notescan.diagnostics.SafeScanner` supplies the next application boundary. It
-executes a finite typed plan through the scheduler, decodes generic responses,
+`notescan.diagnostics.SafeScanner` supplies the next application boundary. Its
+default plan first performs one supported-PID discovery request, then executes
+the bounded identification/readiness/DTC set and only the advertised live
+PIDs. When discovery is negative or malformed it preserves that evidence and
+skips live reads. Explicit caller-supplied plans remain finite and typed, so a
+caller cannot bypass the allow-list. The scanner decodes generic responses,
 retains the original request and response for each completed exchange, and
 persists incomplete evidence after a transport failure. It does not retry or
 reconnect automatically.

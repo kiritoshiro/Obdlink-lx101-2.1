@@ -8,7 +8,7 @@ The planned code will provide an offline simulator, bounded read-only OBD-II eng
 
 ## Current app slice
 
-The first runnable slice includes deterministic replay and fake transports, strict request allow-listing, supported-PID bitmap and generic PID/DTC/readiness/VIN decoders, a bounded scan service that preserves raw responses, atomic JSON session storage, Markdown/HTML evidence reports, conservative observations, and a Windows desktop replay viewer. The viewer exposes metadata and raw-frame tabs for saved evidence. A separately reviewed Classic Bluetooth COM-port transport is now available for supervised integration work; the viewer still starts with synthetic data and never connects automatically.
+The first runnable slice includes deterministic replay and fake transports, strict request allow-listing, supported-PID bitmap and generic PID/DTC/readiness/VIN decoders, a bounded scan service that discovers supported PIDs before requesting live values, preserves raw responses, atomic JSON session storage, Markdown/HTML evidence reports, conservative observations, and a Windows desktop replay viewer. The viewer exposes metadata and raw-frame tabs for saved evidence. A separately reviewed Classic Bluetooth COM-port transport is now available for supervised integration work; the viewer still starts with synthetic data and never connects automatically.
 
 ## Run it
 
