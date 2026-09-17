@@ -23,14 +23,17 @@ class StorageAndReportTests(unittest.TestCase):
 
     def test_report_mentions_coverage_and_policy(self):
         session = build_demo_session()
+        session.vehicle.vin = "WVWZZZ1JZXW000001"
+        session.metadata = {"port": "COM7", "adapter_identity": "OBDLink LX"}
         markdown = render_session_markdown(session)
         html = render_session_html(session)
         self.assertIn("Not checked:", markdown)
         self.assertIn("No write, clear, actuator", markdown)
+        self.assertIn("VIN: WVWZZZ1JZXW000001", markdown)
+        self.assertIn("port: COM7", markdown)
         self.assertIn("SafeScan evidence report", html)
         self.assertIn("airbag/SRS", html)
 
 
 if __name__ == "__main__":
     unittest.main()
-

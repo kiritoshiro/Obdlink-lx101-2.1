@@ -55,6 +55,7 @@ def test_serial_transport_initialises_adapter_and_exchanges_read() -> None:
     assert fake.writes[-1] == b"010C\r"
     transport.close()
     assert not transport.is_open
+    assert transport.adapter_identity == b"OBDLink LX"
 
 
 def test_serial_transport_rejects_non_read_payload_before_io() -> None:

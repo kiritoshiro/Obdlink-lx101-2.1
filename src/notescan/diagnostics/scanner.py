@@ -12,6 +12,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from notescan.domain.models import DiagnosticSession, VehicleProfile, utc_now
@@ -96,6 +97,7 @@ class SafeScanner:
             ended_at=self._now(),
             complete=report.state is SessionState.COMPLETE,
         )
+        session.metadata.update(self._transport_metadata(len(plan)))
         for result in report.results:
             self._record_result(session, result)
         if report.error:
@@ -112,6 +114,36 @@ class SafeScanner:
     def _new_session_id(started_at: datetime) -> str:
         stamp = started_at.astimezone().strftime("%Y%m%d-%H%M%S")
         return f"safescan-{stamp}-{uuid4().hex[:8]}"
+
+    def _transport_metadata(self, plan_size: int) -> dict[str, Any]:
+        transport = self.scheduler.transport
+        metadata: dict[str, Any] = {
+            "transport": type(transport).__name__,
+            "scan_plan_requests": plan_size,
+        }
+        config = getattr(transport, "config", None)
+        port = getattr(config, "port", None)
+        if isinstance(port, str):
+            metadata["port"] = port
+
+        identity = getattr(transport, "adapter_identity", None)
+        if isinstance(identity, bytes):
+            metadata["adapter_identity"] = self._display_bytes(identity)
+        identity_responses = getattr(transport, "identity_responses", None)
+        if isinstance(identity_responses, dict):
+            metadata["adapter_setup_responses"] = {
+                str(command): self._display_bytes(response)
+                for command, response in identity_responses.items()
+                if isinstance(response, bytes)
+            }
+        return metadata
+
+    @staticmethod
+    def _display_bytes(value: bytes) -> str:
+        text = value.decode("ascii", errors="replace").strip()
+        if text and all(ord(char) >= 0x20 or char in "\t" for char in text):
+            return text
+        return value.hex(" ").upper()
 
     def _record_result(self, session: DiagnosticSession, result: ScanResult) -> None:
         response_text = result.response.decode("ascii", errors="replace").strip()

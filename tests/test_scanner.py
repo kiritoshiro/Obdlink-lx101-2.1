@@ -1,9 +1,16 @@
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 from notescan.diagnostics.scanner import SafeScanner, default_scan_requests
 from notescan.safety import DiagnosticRequest, Operation, SafeScheduler, SchedulerConfig
 from notescan.storage import SessionStore
 from notescan.transport import FakeTransport
+
+
+class MetadataTransport(FakeTransport):
+    config = SimpleNamespace(port="COM7")
+    adapter_identity = b"OBDLink LX"
+    identity_responses = {"ATI": b"OBDLink LX", "STI": b"STN firmware"}
 
 
 def test_default_plan_is_finite_and_read_only() -> None:
@@ -75,3 +82,22 @@ def test_scanner_preserves_partial_failure_and_saves_it(tmp_path) -> None:
     assert len(capture.session.measurements) == 1
     assert any("Partial evidence" in note for note in capture.session.notes)
     assert capture.saved_path == tmp_path / "partial-1.json"
+
+
+def test_scanner_records_transport_metadata(tmp_path) -> None:
+    transport = MetadataTransport({b"\x01\x0C": b"41 0C 01 F4"})
+    scanner = SafeScanner(
+        SafeScheduler(transport, config=SchedulerConfig(min_interval_s=0)),
+        store=SessionStore(tmp_path),
+    )
+    capture = scanner.run(
+        [DiagnosticRequest(Operation.LIVE_DATA, 0x0C)],
+        session_id="metadata-1",
+    )
+
+    assert capture.session.metadata["transport"] == "MetadataTransport"
+    assert capture.session.metadata["scan_plan_requests"] == 1
+    assert capture.session.metadata["port"] == "COM7"
+    assert capture.session.metadata["adapter_identity"] == "OBDLink LX"
+    assert capture.session.metadata["adapter_setup_responses"]["STI"] == "STN firmware"
+    assert SessionStore(tmp_path).load("metadata-1").metadata == capture.session.metadata

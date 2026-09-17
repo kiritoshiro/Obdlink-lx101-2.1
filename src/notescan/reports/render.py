@@ -37,6 +37,7 @@ def render_session_markdown(session: DiagnosticSession) -> str:
         f"- Vehicle: {session.vehicle.display_name}",
         f"- Transmission: {session.vehicle.transmission}",
         f"- Adapter labels: {', '.join(session.vehicle.adapter_labels) or 'not recorded'}",
+        f"- VIN: {session.vehicle.vin or 'not recorded'}",
         "",
         "## Coverage",
         "",
@@ -44,9 +45,13 @@ def render_session_markdown(session: DiagnosticSession) -> str:
         "",
         "Not checked: " + (", ".join(session.unsupported_systems) or "none recorded"),
         "",
-        "## Trouble codes",
-        "",
     ]
+    if session.metadata:
+        lines.extend(["## Session metadata", ""])
+        for key, value in sorted(session.metadata.items()):
+            lines.append(f"- {key}: {value}")
+        lines.append("")
+    lines.extend(["## Trouble codes", ""])
     if session.trouble_codes:
         lines.extend(
             f"- **{item.code}** ({item.status}, {item.ecu}): {item.description}"

@@ -117,19 +117,22 @@ class SerialTransport:
 
     @property
     def adapter_identity(self) -> bytes | None:
-        """Raw ``ATI`` response captured during the last successful open."""
+        """Raw ``ATI`` response from the last successful open, retained after close."""
 
         return self._identity
 
     @property
     def identity_responses(self) -> dict[str, bytes]:
-        """Raw responses for every fixed identity command, keyed by command."""
+        """Last successful setup responses, retained for session evidence."""
 
         return dict(self._identity_responses)
 
     def open(self) -> None:
         if self._serial is not None:
             raise TransportError("serial transport is already open")
+        # A new attempt must not expose identity captured by a prior port.
+        self._identity = None
+        self._identity_responses = {}
         try:
             port = self._serial_factory(
                 port=self.config.port,
@@ -141,7 +144,6 @@ class SerialTransport:
             if not getattr(port, "is_open", True):
                 port.open()
             self._serial = port
-            self._identity_responses = {}
             port.reset_input_buffer()
             port.reset_output_buffer()
             started = self._clock()
@@ -164,8 +166,6 @@ class SerialTransport:
 
     def close(self) -> None:
         port, self._serial = self._serial, None
-        self._identity = None
-        self._identity_responses = {}
         if port is not None:
             try:
                 port.close()

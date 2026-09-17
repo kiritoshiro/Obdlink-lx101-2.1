@@ -173,6 +173,7 @@ class DiagnosticSession:
         "body control",
         "steering",
     )
+    metadata: dict[str, Any] = field(default_factory=dict)
     raw_frames: list[dict[str, Any]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
@@ -188,6 +189,7 @@ class DiagnosticSession:
             "readiness": self.readiness.to_dict() if self.readiness else None,
             "supported_systems": list(self.supported_systems),
             "unsupported_systems": list(self.unsupported_systems),
+            "metadata": dict(self.metadata),
             "raw_frames": self.raw_frames,
             "notes": list(self.notes),
         }
@@ -206,6 +208,8 @@ class DiagnosticSession:
         values["readiness"] = ReadinessStatus.from_dict(readiness) if readiness else None
         values["supported_systems"] = tuple(values.get("supported_systems", ()))
         values["unsupported_systems"] = tuple(values.get("unsupported_systems", ()))
+        metadata = values.get("metadata", {})
+        values["metadata"] = dict(metadata) if isinstance(metadata, Mapping) else {}
         return cls(**values)
 
     @property
