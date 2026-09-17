@@ -21,6 +21,41 @@ class UnsupportedPidError(DecoderError):
     """The generic decoder does not claim support for this PID."""
 
 
+class AdapterStatusResponse(DecoderError):
+    """The adapter reported its own status instead of returning ECU data.
+
+    ``NO DATA``, ``UNABLE TO CONNECT`` and similar ELM327 replies are real
+    evidence about the exchange, not malformed input, so they are raised
+    separately and recorded as such rather than as a decoder failure.
+    """
+
+    def __init__(self, status: str) -> None:
+        super().__init__(f"Adapter reported {status!r} instead of an ECU response")
+        self.status = status
+
+
+# ELM327-compatible adapters interleave their own informational and error text
+# with ECU responses.  ``SEARCHING...`` in particular precedes the first reply
+# after protocol auto-detection, so it must not be mistaken for hex data.
+_ADAPTER_NOISE_LINES = frozenset({"SEARCHING...", "SEARCHING"})
+_ADAPTER_STATUS_LINES = frozenset(
+    {
+        "?",
+        "BUFFER FULL",
+        "BUS BUSY",
+        "BUS ERROR",
+        "CAN ERROR",
+        "DATA ERROR",
+        "ERROR",
+        "FB ERROR",
+        "LV RESET",
+        "NO DATA",
+        "STOPPED",
+        "UNABLE TO CONNECT",
+    }
+)
+
+
 def decode_supported_pids_response(
     response: str | bytes | bytearray | Iterable[int],
 ) -> frozenset[int]:
@@ -56,6 +91,47 @@ def decode_negative_response(
     return None
 
 
+def _looks_like_hex_text(tokens: list[str]) -> bool:
+    r"""Return ``True`` only for token lists an adapter would emit as hex text.
+
+    Every token must be a complete, even-length run of hex digits.  Requiring
+    even length is what separates real hex text from raw bytes that merely
+    happen to decode as ASCII, such as ``b"\x41\x0c\x0d\x20"``.
+    """
+
+    return bool(tokens) and all(
+        token and len(token) % 2 == 0 and all(char in "0123456789abcdefABCDEF" for char in token)
+        for token in tokens
+    )
+
+
+def strip_adapter_noise(text: str) -> str:
+    """Remove ELM327 informational lines and surface adapter status replies."""
+
+    lines = [line.strip() for line in text.replace("\r", "\n").split("\n")]
+    kept: list[str] = []
+    statuses: list[str] = []
+    for line in lines:
+        if not line:
+            continue
+        upper = line.upper()
+        if upper in _ADAPTER_NOISE_LINES:
+            continue
+        if upper in _ADAPTER_STATUS_LINES:
+            statuses.append(upper)
+            continue
+        # ``SEARCHING...41 00 ...`` arrives without a separator on some adapters.
+        for noise in sorted(_ADAPTER_NOISE_LINES, key=len, reverse=True):
+            if upper.startswith(noise):
+                line = line[len(noise) :].strip()
+                break
+        if line:
+            kept.append(line)
+    if not kept and statuses:
+        raise AdapterStatusResponse(statuses[0])
+    return " ".join(kept)
+
+
 def parse_hex_bytes(value: str | bytes | bytearray | Iterable[int]) -> bytes:
     """Parse a hex response while rejecting malformed or unsafe input."""
 
@@ -65,12 +141,13 @@ def parse_hex_bytes(value: str | bytes | bytearray | Iterable[int]) -> bytes:
             text = raw.decode("ascii")
         except UnicodeDecodeError:
             return raw
-        if any(char.isspace() for char in text) or text.lower().startswith("0x"):
-            value = text
+        cleaned = strip_adapter_noise(text)
+        if _looks_like_hex_text(cleaned.replace(",", " ").replace(";", " ").split()):
+            value = cleaned
         else:
             return raw
     if isinstance(value, str):
-        text = value.replace(",", " ").replace(";", " ").strip()
+        text = strip_adapter_noise(value).replace(",", " ").replace(";", " ").strip()
         if not text:
             return b""
         tokens = text.split()
@@ -90,6 +167,31 @@ def parse_hex_bytes(value: str | bytes | bytearray | Iterable[int]) -> bytes:
     if any(item < 0 or item > 255 for item in output):
         raise DecoderError("Response byte outside 0..255")
     return output
+
+
+CONTINUOUS_MONITORS = (
+    ("misfire", 0),
+    ("fuel_system", 1),
+    ("components", 2),
+)
+SPARK_IGNITION_MONITORS = (
+    ("catalyst", 0),
+    ("heated_catalyst", 1),
+    ("evaporative_system", 2),
+    ("secondary_air_system", 3),
+    ("ac_refrigerant", 4),
+    ("oxygen_sensor", 5),
+    ("oxygen_sensor_heater", 6),
+    ("egr_system", 7),
+)
+COMPRESSION_IGNITION_MONITORS = (
+    ("nmhc_catalyst", 0),
+    ("nox_scr_aftertreatment", 1),
+    ("boost_pressure", 3),
+    ("exhaust_gas_sensor", 5),
+    ("particulate_filter", 6),
+    ("egr_vvt_system", 7),
+)
 
 
 _PID_NAMES = {
@@ -178,6 +280,12 @@ def decode_dtc_response(
     ``positive_service`` is 0x43 for stored, 0x47 for pending, and 0x4A for
     permanent codes. Keeping it explicit prevents a response from one mode
     being silently labelled as another.
+
+    On ISO 15765-4 (CAN) the response carries a DTC count byte between the
+    service byte and the two-byte DTC records; on the older serial protocols it
+    does not. The framing is detected from the payload length, because an
+    unpadded record list always has an even length. A declared count larger
+    than the records present is rejected rather than guessed at.
     """
 
     raw_bytes = parse_hex_bytes(response)
@@ -187,12 +295,20 @@ def decode_dtc_response(
         raise DecoderError(
             f"Expected positive DTC response ({positive_service:02X} ... )"
         )
-    if len(raw_bytes[1:]) % 2:
-        raise DecoderError("DTC response must contain complete two-byte records")
+    payload = raw_bytes[1:]
+    declared_count: int | None = None
+    if len(payload) % 2:
+        declared_count = payload[0]
+        payload = payload[1:]
+        if declared_count > len(payload) // 2:
+            raise DecoderError(
+                f"DTC response declares {declared_count} codes but carries "
+                f"{len(payload) // 2} records"
+            )
     output: list[TroubleCode] = []
     type_letters = "PCBU"
-    for index in range(1, len(raw_bytes), 2):
-        first, second = raw_bytes[index : index + 2]
+    for index in range(0, len(payload), 2):
+        first, second = payload[index : index + 2]
         if first == 0 and second == 0:
             continue
         letter = type_letters[(first >> 6) & 0x03]
@@ -203,8 +319,14 @@ def decode_dtc_response(
                 description="Generic diagnostic code; consult service data.",
                 status=status,
                 ecu=ecu,
-                raw=" ".join(f"{item:02X}" for item in raw_bytes[index : index + 2]),
+                raw=" ".join(f"{item:02X}" for item in payload[index : index + 2]),
             )
+        )
+    # Trailing 00 00 padding is normal, so fewer decoded codes than declared is
+    # expected; more codes than declared means the framing was misread.
+    if declared_count is not None and len(output) > declared_count:
+        raise DecoderError(
+            f"DTC response declares {declared_count} codes but decoded {len(output)}"
         )
     return output
 
@@ -238,28 +360,38 @@ def decode_vin_response(
 def decode_readiness_response(
     response: str | bytes | bytearray | Iterable[int],
 ) -> ReadinessStatus:
-    """Decode Mode 01 PID 01 MIL, code count and monitor readiness bits."""
+    """Decode Mode 01 PID 01 MIL, code count and monitor readiness bits.
+
+    SAE J1979 splits the four data bytes as follows. Byte A carries the MIL
+    lamp state and the stored-code count. Byte B carries the three continuous
+    monitors: bits 0-2 say whether each is supported and bits 4-6 say whether
+    it is *not* complete. Bytes C and D carry the eight non-continuous
+    monitors, C for support and D for incompleteness. Bit 3 of byte B selects
+    the compression-ignition monitor names instead of the spark-ignition ones.
+    """
 
     raw_bytes = parse_hex_bytes(response)
-    if len(raw_bytes) < 5 or raw_bytes[:2] != bytes((0x41, 0x01)):
-        raise DecoderError("Expected positive Mode 01 PID 01 response (41 01 ...)")
-    first, supported, ready = raw_bytes[2:5]
-    monitor_bits = (
-        ("misfire", 0),
-        ("fuel_system", 1),
-        ("components", 2),
-        ("catalyst", 3),
-        ("heated_catalyst", 4),
-        ("evaporative_system", 5),
-        ("secondary_air", 6),
-        ("oxygen_sensor", 7),
+    if len(raw_bytes) < 6 or raw_bytes[:2] != bytes((0x41, 0x01)):
+        raise DecoderError("Expected positive Mode 01 PID 01 response (41 01 A B C D)")
+    first, byte_b, supported, incomplete = raw_bytes[2:6]
+    compression_ignition = bool(byte_b & 0x08)
+
+    monitors: dict[str, str] = {}
+    for name, bit in CONTINUOUS_MONITORS:
+        if byte_b & (1 << bit):
+            monitors[name] = "not_ready" if byte_b & (1 << (bit + 4)) else "ready"
+        else:
+            monitors[name] = "unsupported"
+
+    names = (
+        COMPRESSION_IGNITION_MONITORS if compression_ignition else SPARK_IGNITION_MONITORS
     )
-    monitors = {
-        name: ("ready" if ready & (1 << bit) == 0 else "not_ready")
-        if supported & (1 << bit)
-        else "unsupported"
-        for name, bit in monitor_bits
-    }
+    for name, bit in names:
+        if supported & (1 << bit):
+            monitors[name] = "not_ready" if incomplete & (1 << bit) else "ready"
+        else:
+            monitors[name] = "unsupported"
+
     return ReadinessStatus(
         mil_on=bool(first & 0x80),
         stored_code_count=first & 0x7F,
