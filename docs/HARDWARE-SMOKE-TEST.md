@@ -31,6 +31,32 @@ coding, reflashing, or arbitrary-frame features.
 4. Save or copy the session export locally. Redact the VIN before sharing it;
    do not commit live exports to Git.
 
+## Unverified assumptions to check on the first real session
+
+These are the places where the offline fixtures cannot stand in for the adapter.
+Record what actually happened for each one, whether or not the scan succeeded.
+
+- **Adapter reset timing.** `ATZ` is sent with the same two-second
+  `command_timeout_s` as every other setup command, and a slower reset fails the
+  whole `open()` with `adapter initialisation exceeded its time budget` or
+  `adapter did not return its prompt before timeout`. If the first connection
+  attempt fails that way, note the elapsed time before raising
+  `SerialConfig.command_timeout_s`; do not raise it pre-emptively.
+- **Multi-frame responses.** `SerialTransport` returns everything received
+  before the `>` prompt as one byte string, and the decoders join surviving
+  lines with spaces. That is correct for single-frame replies but has never been
+  exercised against a real multi-frame one. Watch the Mode 09 VIN read in
+  particular, and any read where more than one ECU answers. Keep the Raw frames
+  tab for any response that spans several lines, and compare the decoded VIN
+  against the one on the vehicle.
+- **Protocol-search chatter.** The first request after `ATSP0` may be prefixed
+  with `SEARCHING...`. This is stripped before decoding, so supported-PID
+  discovery should succeed on the first attempt. If the session instead reports
+  `Supported-PID discovery was unavailable`, capture the exact raw bytes.
+- **Stored-code framing.** On CAN the Mode 03/07/0A responses carry a DTC count
+  byte, which is detected from the payload length. Compare any decoded codes
+  against a trusted reference tool before acting on them.
+
 ## Optional second session: engine idling
 
 Run this only when the first session completed without transport errors. Keep
@@ -49,5 +75,6 @@ else behaves unexpectedly. Keep the partial session; it is diagnostic evidence.
 
 Record date/time, SafeScan commit, Windows version, adapter label/firmware,
 COM port, ignition/engine state, completion status, unexpected behavior, and
-the local export path. Keep VIN, registration, and location data out of GitHub
+the local export path. Also record the outcome of each item under *Unverified
+assumptions* above. Keep VIN, registration, and location data out of GitHub
 issues and committed fixtures.
