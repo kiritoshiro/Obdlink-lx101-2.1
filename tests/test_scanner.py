@@ -101,3 +101,28 @@ def test_scanner_records_transport_metadata(tmp_path) -> None:
     assert capture.session.metadata["adapter_identity"] == "OBDLink LX"
     assert capture.session.metadata["adapter_setup_responses"]["STI"] == "STN firmware"
     assert SessionStore(tmp_path).load("metadata-1").metadata == capture.session.metadata
+
+
+def test_scanner_records_supported_pids_and_negative_responses() -> None:
+    transport = FakeTransport(
+        {
+            b"\x01\x00": b"41 00 80 00 00 01",
+            b"\x01\x0C": b"7F 01 12",
+        }
+    )
+    scanner = SafeScanner(
+        SafeScheduler(transport, config=SchedulerConfig(min_interval_s=0)),
+    )
+    capture = scanner.run(
+        [
+            DiagnosticRequest(Operation.SUPPORTED_PIDS, 0x00),
+            DiagnosticRequest(Operation.LIVE_DATA, 0x0C),
+        ],
+        session_id="support-1",
+    )
+
+    assert capture.session.complete
+    assert capture.session.metadata["supported_pids"] == ["01", "20"]
+    assert any("not advertised" in note for note in capture.session.notes)
+    assert any("negative response" in note for note in capture.session.notes)
+    assert capture.session.measurements == []

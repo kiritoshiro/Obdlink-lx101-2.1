@@ -8,8 +8,10 @@ from notescan.diagnostics.decoders import (  # noqa: E402
     DecoderError,
     UnsupportedPidError,
     decode_dtc_response,
+    decode_negative_response,
     decode_pid_response,
     decode_readiness_response,
+    decode_supported_pids_response,
     decode_vin_response,
 )
 
@@ -41,6 +43,10 @@ class DecoderTests(unittest.TestCase):
         item = decode_pid_response("42 0C 01 F4", positive_service=0x42)
         self.assertEqual(item.value, 125.0)
 
+    def test_supported_pid_bitmap_uses_standard_msb_first_mapping(self):
+        supported = decode_supported_pids_response("41 00 80 00 00 01")
+        self.assertEqual(supported, frozenset({0x01, 0x20}))
+
     def test_rejects_wrong_service_and_unknown_pid(self):
         with self.assertRaises(DecoderError):
             decode_pid_response("43 00 00")
@@ -62,6 +68,10 @@ class DecoderTests(unittest.TestCase):
     def test_vin(self):
         vin = decode_vin_response(b"\x49\x02\x01WVWZZZ1JZXW000001")
         self.assertEqual(vin, "WVWZZZ1JZXW000001")
+
+    def test_negative_response(self):
+        self.assertEqual(decode_negative_response("7F 01 12"), (0x01, 0x12))
+        self.assertIsNone(decode_negative_response("41 0C 00 00"))
 
     def test_readiness(self):
         status = decode_readiness_response("41 01 81 07 01 00")

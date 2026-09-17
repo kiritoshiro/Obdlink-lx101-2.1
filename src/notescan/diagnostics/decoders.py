@@ -21,6 +21,41 @@ class UnsupportedPidError(DecoderError):
     """The generic decoder does not claim support for this PID."""
 
 
+def decode_supported_pids_response(
+    response: str | bytes | bytearray | Iterable[int],
+) -> frozenset[int]:
+    """Decode a standard Mode 01 supported-PID bitmap response.
+
+    A response such as ``41 00 BE 3E B8 13`` advertises PIDs 0x01 through
+    0x20. The most-significant bitmap bit represents the first PID after the
+    requested base; the least-significant bit represents the last one.
+    """
+
+    raw_bytes = parse_hex_bytes(response)
+    if len(raw_bytes) < 6 or raw_bytes[0] != 0x41:
+        raise DecoderError("Expected positive Mode 01 supported-PID response (41 base bitmap)")
+    base = raw_bytes[1]
+    if base not in {0x00, 0x20, 0x40, 0x60, 0x80, 0xA0, 0xC0}:
+        raise DecoderError(f"Unsupported supported-PID base 0x{base:02X}")
+    bitmap = int.from_bytes(raw_bytes[2:6], "big")
+    return frozenset(
+        base + offset
+        for offset in range(1, 33)
+        if bitmap & (1 << (32 - offset))
+    )
+
+
+def decode_negative_response(
+    response: str | bytes | bytearray | Iterable[int],
+) -> tuple[int, int] | None:
+    """Return ``(requested_service, negative_response_code)`` when present."""
+
+    raw_bytes = parse_hex_bytes(response)
+    if len(raw_bytes) >= 3 and raw_bytes[0] == 0x7F:
+        return raw_bytes[1], raw_bytes[2]
+    return None
+
+
 def parse_hex_bytes(value: str | bytes | bytearray | Iterable[int]) -> bytes:
     """Parse a hex response while rejecting malformed or unsafe input."""
 

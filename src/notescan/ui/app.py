@@ -183,6 +183,18 @@ if QT_AVAILABLE:
             self.codes.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
             self.codes.horizontalHeader().setStretchLastSection(True)
             self.tabs.addTab(self.codes, "Trouble codes")
+            self.metadata_view = QTextEdit()
+            self.metadata_view.setReadOnly(True)
+            self.metadata_view.setAccessibleName("Session metadata")
+            self.tabs.addTab(self.metadata_view, "Metadata")
+            self.raw_frames = QTableWidget(0, 5)
+            self.raw_frames.setHorizontalHeaderLabels(
+                ["Time", "Operation", "Request", "Response", "Response bytes"]
+            )
+            self.raw_frames.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+            self.raw_frames.setAlternatingRowColors(True)
+            self.raw_frames.horizontalHeader().setStretchLastSection(True)
+            self.tabs.addTab(self.raw_frames, "Raw frames")
             self.findings = QTextEdit()
             self.findings.setReadOnly(True)
             self.findings.setAccessibleName("Conservative observations")
@@ -242,6 +254,22 @@ if QT_AVAILABLE:
                 for column, value in enumerate(code_values):
                     self.codes.setItem(index, column, QTableWidgetItem(value))
             self.codes.resizeColumnsToContents()
+
+            metadata_lines = [f"{key}: {value}" for key, value in sorted(session.metadata.items())]
+            self.metadata_view.setPlainText("\n".join(metadata_lines) or "No metadata recorded.")
+
+            self.raw_frames.setRowCount(len(session.raw_frames))
+            for index, frame in enumerate(session.raw_frames):
+                frame_values = (
+                    str(frame.get("timestamp", "")),
+                    str(frame.get("operation", "")),
+                    str(frame.get("request", "")),
+                    str(frame.get("response", "")),
+                    str(frame.get("response_bytes", "")),
+                )
+                for column, value in enumerate(frame_values):
+                    self.raw_frames.setItem(index, column, QTableWidgetItem(value))
+            self.raw_frames.resizeColumnsToContents()
 
             blocks: list[str] = []
             for finding in analyze_session(session):

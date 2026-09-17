@@ -24,8 +24,10 @@ from notescan.storage.json_store import SessionStore
 from .decoders import (
     DecoderError,
     decode_dtc_response,
+    decode_negative_response,
     decode_pid_response,
     decode_readiness_response,
+    decode_supported_pids_response,
     decode_vin_response,
 )
 
@@ -98,6 +100,11 @@ class SafeScanner:
             complete=report.state is SessionState.COMPLETE,
         )
         session.metadata.update(self._transport_metadata(len(plan)))
+        session.metadata["requested_live_pids"] = [
+            f"{request.pid:02X}"
+            for request in plan
+            if request.operation is Operation.LIVE_DATA and request.pid is not None
+        ]
         for result in report.results:
             self._record_result(session, result)
         if report.error:
@@ -161,6 +168,17 @@ class SafeScanner:
             }
         )
         try:
+            negative = decode_negative_response(result.response)
+        except DecoderError:
+            negative = None
+        if negative is not None:
+            service, code = negative
+            session.notes.append(
+                f"ECU negative response for {result.operation.value}: "
+                f"service 0x{service:02X}, code 0x{code:02X}."
+            )
+            return
+        try:
             if result.operation is Operation.LIVE_DATA:
                 session.measurements.append(
                     decode_pid_response(
@@ -199,7 +217,22 @@ class SafeScanner:
             elif result.operation is Operation.VEHICLE_IDENTIFICATION:
                 session.vehicle.vin = decode_vin_response(result.response)
             elif result.operation is Operation.SUPPORTED_PIDS:
-                session.notes.append("Supported PID bitmap preserved in raw_frames.")
+                supported = decode_supported_pids_response(result.response)
+                session.metadata["supported_pids"] = [
+                    f"{pid:02X}" for pid in sorted(supported)
+                ]
+                requested = {
+                    int(pid, 16)
+                    for pid in session.metadata.get("requested_live_pids", [])
+                    if isinstance(pid, str)
+                }
+                unsupported = sorted(requested - supported)
+                if unsupported:
+                    session.notes.append(
+                        "Requested live PIDs not advertised by the ECU: "
+                        + ", ".join(f"0x{pid:02X}" for pid in unsupported)
+                        + "."
+                    )
         except (DecoderError, ValueError) as exc:
             session.notes.append(
                 f"Could not decode {result.operation.value} response: {exc}"

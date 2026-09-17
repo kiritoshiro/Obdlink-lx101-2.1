@@ -52,7 +52,9 @@ stationary-vehicle confirmation before creating `SerialTransport` and
 boundaries; there is no reconnect or retry loop. Completed and partial sessions
 are saved below `%LOCALAPPDATA%\SafeScan\sessions` unless `run(storage_root=...)`
 was given an explicit directory. The viewer never discovers or connects to a
-port on its own.
+port on its own. The Metadata and Raw frames tabs expose adapter identity,
+supported-PID discovery, negative-response notes, and the original request and
+response bytes for each completed exchange.
 
 ## Safety boundary for contributions
 
